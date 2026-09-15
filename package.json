@@ -1,0 +1,8 @@
+{
+  "name": "calendar-availability-sync",
+  "private": true,
+  "scripts": {
+    "test": "node --test",
+    "check": "node scripts/check.js"
+  }
+}

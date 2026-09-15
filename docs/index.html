@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calendar Availability Sync</title>
+  <meta name="description" content="A personal Google Apps Script utility for synchronizing calendar availability across connected Google accounts.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <nav aria-label="Main navigation"><a href="index.html" aria-current="page">Calendar Availability Sync</a><a href="privacy.html">Privacy</a><a href="https://github.com/nappelson/calendar-availability-sync">Source code</a></nav>
+  <p class="eyebrow">A personal calendar utility</p>
+  <h1>One schedule.<br>Across your calendars.</h1>
+  <p class="intro">Calendar Availability Sync is a Google Apps Script project that copies event details to a designated personal hub and creates private Busy blocks on other connected calendars.</p>
+  <h2>How it works</h2>
+  <p>The owner connects each Google account individually and chooses which calendars participate. Scheduled runs reconcile copies when source events change or disappear. Original events remain the place to edit meetings and respond to invitations.</p>
+  <ul>
+    <li>The designated hub receives event titles, descriptions, locations, and meeting links that the connected account can access.</li>
+    <li>Other destinations receive Busy blocks without the original event details.</li>
+    <li>Copies have no invited attendees or reminders.</li>
+  </ul>
+  <div class="note">This installation is for the owner's personal use. This website provides project information; it does not offer account registration or connect calendars.</div>
+  <h2>Google account access</h2>
+  <p>The script requests account identity and permission to read and write calendar events. Authorization is performed through Google. See the <a href="privacy.html">privacy policy</a> for how data and credentials are handled.</p>
+  <h2>Contact</h2>
+  <p>Maintained by <a href="https://github.com/nappelson">nappelson</a>. For project questions, use the <a href="https://github.com/nappelson/calendar-availability-sync/issues">GitHub issue tracker</a>. Issues are public: do not include credentials, authorization links, calendar IDs, or event details.</p>
+  <footer>Calendar Availability Sync · <a href="privacy.html">Privacy policy</a></footer>
+</main>
+</body>
+</html>

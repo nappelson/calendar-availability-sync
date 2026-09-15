@@ -1,0 +1,7 @@
+{
+  "timeZone": "America/Toronto",
+  "dependencies": {"enabledAdvancedServices": [{"userSymbol": "Calendar", "serviceId": "calendar", "version": "v3"}]},
+  "exceptionLogging": "NONE",
+  "runtimeVersion": "V8",
+  "oauthScopes": ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/script.scriptapp", "https://www.googleapis.com/auth/script.external_request"]
+}

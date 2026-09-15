@@ -1,0 +1,14 @@
+node_modules/
+.clasprc.json
+.clasp.json
+.DS_Store
+
+# Private installation settings: uploaded only to Apps Script via clasp.
+/src/Config.js
+.env
+.env.*
+*.swp
+*.swo
+*~
+credentials*.json
+client_secret*.json
