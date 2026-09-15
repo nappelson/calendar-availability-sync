@@ -278,9 +278,9 @@ test('enabling hub upgrades existing blocks in place; detail-only changes and re
   h.context.SYNC_CONFIG.hubCalendarId = 'a';
   assert.equal(h.run().planned.update, 1); assert.equal(h.blocks('a')[0].id, id);
   h.db.b[0].summary = 'Changed'; h.db.b[0].description = 'New description'; h.db.b[0].location = 'New location';
-  assert.equal(h.run().planned.update, 1); assert.equal(h.blocks('a')[0].description, 'New description');
+  assert.equal(h.run().planned.update, 1); assert.equal(h.blocks('a')[0].description, 'Source calendar: b<br><br>New description');
   delete h.db.b[0].description; delete h.db.b[0].location;
-  assert.equal(h.run().planned.update, 1); assert.equal(h.blocks('a')[0].description, ''); assert.equal(h.blocks('a')[0].location, '');
+  assert.equal(h.run().planned.update, 1); assert.equal(h.blocks('a')[0].description, 'Source calendar: b'); assert.equal(h.blocks('a')[0].location, '');
   assert.equal(h.run().applied, 0);
 });
 test('changing or disabling hub scrubs details from previous hub, cleanup remains usable', () => {
@@ -336,7 +336,8 @@ test('loop prevention holds for two through eight calendars and every hub destin
         assert.deepEqual(h.db[id].find(e => e.id === 'original-' + id), event('original-' + id));
         for (const copy of h.blocks(id)) {
           assert.equal(copy.summary, id === hub ? 'SECRET' : 'Busy');
-          assert.equal(copy.description, id === hub ? 'SECRET' : undefined);
+          if (id === hub) assert.match(copy.description, /^Source calendar: calendar-\d<br><br>SECRET$/);
+          else assert.equal(copy.description, undefined);
         }
       }
     }
@@ -357,4 +358,29 @@ test('copies from another installation of this script never become sources', () 
   assert.equal(h.db.b.length, 0);
   assert.deepEqual(h.db.c, [foreign]);
   assert.equal(h.run().applied, 0);
+});
+
+
+test('hub source labels are escaped, refreshed in place, and never leak into Busy destinations', () => {
+  const h = harness();
+  h.context.SYNC_CONFIG.hubCalendarId = 'a';
+  h.context.SYNC_CONFIG.calendars[1].label = 'Client & <Team>';
+  h.db.b.push(event('work', { description: '<p>Agenda</p>' }));
+  h.run();
+  const copyId = h.blocks('a')[0].id;
+  assert.equal(h.blocks('a')[0].description, 'Source calendar: Client &amp; &lt;Team&gt;<br><br><p>Agenda</p>');
+  assert.equal(h.blocks('c')[0].description, undefined);
+  assert.equal(h.run().applied, 0);
+  h.context.SYNC_CONFIG.calendars[1].label = 'New client name';
+  const result = h.run();
+  assert.equal(result.planned.update, 1);
+  assert.equal(result.planned.insert, 0);
+  assert.equal(h.blocks('a')[0].id, copyId);
+  assert.equal(h.blocks('a')[0].description, 'Source calendar: New client name<br><br><p>Agenda</p>');
+  h.context.SYNC_CONFIG.calendars[1].label = '   ';
+  h.run();
+  assert.equal(h.blocks('a')[0].description, 'Source calendar: b<br><br><p>Agenda</p>');
+  assert.equal(h.run().applied, 0);
+  assert.equal(h.blocks('c')[0].description, undefined);
+  assert.equal(h.db.b[0].description, '<p>Agenda</p>');
 });

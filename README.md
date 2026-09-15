@@ -53,7 +53,7 @@ The GitHub Pages workflow publishes **only `docs/`**. It does not upload code or
    };
    ```
 
-   Use the exact Google account sign-in email and Calendar IDs. Keys are stable lowercase identifiers; labels are informational. A secondary calendar uses its own Calendar ID, with the key of an account authorized to access it. The hub must appear in `calendars`. Set it to `null` for Busy-only everywhere.
+   Use the exact Google account sign-in email and Calendar IDs. Keys are stable lowercase identifiers; labels appear as `Source calendar: <label>` at the top of detailed hub copies. If a label is missing or blank, the Calendar ID is used. Changing a label updates existing hub copies on the next sync; Busy-only destinations do not receive source labels. A secondary calendar uses its own Calendar ID, with the key of an account authorized to access it. The hub must appear in `calendars`. Set it to `null` for Busy-only everywhere.
 3. From this repository on your Mac mini:
 
    ```sh

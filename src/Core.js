@@ -34,7 +34,7 @@ var BusySync = (function () {
   function identity(e) { return e.iCalUID ? JSON.stringify([e.iCalUID, e.originalStartTime ? when(e.originalStartTime) : 'single', when(e.start), when(e.end)]) : null; }
   function time(t) { return t.date ? { date: t.date } : { dateTime: new Date(t.dateTime).toISOString() }; }
   function escapeHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-  function description(e) {
+  function description(e, sourceLabel) {
     var links = [];
     function add(label, url) {
       if (typeof url === 'string' && /^https?:\/\//i.test(url) && !links.some(function (x) { return x.url === url; })) links.push({ label: label, url: url });
@@ -42,14 +42,15 @@ var BusySync = (function () {
     add('Original event', e.htmlLink);
     add('Join meeting', e.hangoutLink);
     ((e.conferenceData || {}).entryPoints || []).forEach(function (point) { if (point.entryPointType === 'video') add('Join meeting', point.uri); });
-    var parts = e.description ? [e.description] : [];
+    var parts = ['Source calendar: ' + escapeHtml(sourceLabel)];
+    if (e.description) parts.push(e.description);
     links.forEach(function (link) { parts.push(escapeHtml(link.label + ': ' + link.url)); });
     return parts.join('<br><br>');
   }
-  function body(e, owner, key, detailed) {
+  function body(e, owner, key, detailed, sourceLabel) {
     var copy = { summary: detailed ? (e.summary || '(Untitled event)') : 'Busy', start: time(e.start), end: time(e.end), status: 'confirmed', transparency: 'opaque', visibility: 'private', reminders: { useDefault: false, overrides: [] }, extendedProperties: { private: { busySyncApp: APP, busySyncOwner: owner, busySyncKey: key } } };
     if (detailed) {
-      copy.description = description(e);
+      copy.description = description(e, sourceLabel);
       copy.location = e.location || '';
     }
     return copy;
@@ -69,12 +70,14 @@ var BusySync = (function () {
         var seen = new Set(originals[dest].map(identity).filter(Boolean));
         active.forEach(function (source) {
           if (source === dest) return;
+          var sourceCalendar = c.calendars.filter(function (calendar) { return calendar.id === source; })[0];
+          var sourceLabel = typeof sourceCalendar.label === 'string' && sourceCalendar.label.trim() ? sourceCalendar.label.trim() : source;
           originals[source].forEach(function (e) {
             var uid = identity(e);
             if (uid && seen.has(uid)) return;
             if (uid) seen.add(uid);
             var key = hash(JSON.stringify([source, e.id]));
-            desired[key] = body(e, owner, key, dest === c.hubCalendarId);
+            desired[key] = body(e, owner, key, dest === c.hubCalendarId, sourceLabel);
           });
         });
       }
