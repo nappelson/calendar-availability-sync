@@ -12,11 +12,11 @@ function harness(ids = ['a', 'b', 'c']) {
   const db = Object.fromEntries(ids.map(id => [id, []]));
   const props = {}, calls = [], logs = [];
   let locked = false, sequence = 0;
-  const h = { db, props, calls, logs, failRead: null, failWrite: false, ambiguousInsert: false, role: 'owner', pageSize: 2, lockBusy: false, triggers: [], filterSemantics: 'every' };
+  const h = { db, props, calls, logs, failRead: null, failWrite: false, ambiguousInsert: false, role: 'owner', pageSize: 2, lockBusy: false, triggers: [], filterSemantics: 'every', elapsedMs: 0, writeElapsedMs: 0, readElapsedMs: 0 };
   const context = {
     Date: class extends Date {
       constructor(...args) { super(...(args.length ? args : ['2026-09-15T16:00:00Z'])); }
-      static now() { return Date.parse('2026-09-15T16:00:00Z'); }
+      static now() { return Date.parse('2026-09-15T16:00:00Z') + h.elapsedMs; }
     },
     console: { log: x => logs.push(x) },
     PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] || null, setProperty: (k, v) => { props[k] = v; } }) },
@@ -30,6 +30,7 @@ function harness(ids = ['a', 'b', 'c']) {
     Calendar: { Events: {
       list(id, opts) {
         calls.push(['list', id, clone(opts)]);
+        h.elapsedMs += h.readElapsedMs;
         if (h.failRead === id || !db[id] || (h.failPage && opts.pageToken)) throw new Error('SECRET API error');
         let events = db[id].filter(e => e.status !== 'cancelled');
         if (opts.privateExtendedProperty) events = events.filter(e => opts.privateExtendedProperty[h.filterSemantics](pair => { const [k, v] = pair.split('='); return e.extendedProperties?.private?.[k] === v; }));
@@ -37,15 +38,16 @@ function harness(ids = ['a', 'b', 'c']) {
         const offset = Number(opts.pageToken || 0), items = clone(events.slice(offset, offset + h.pageSize));
         return { items, accessRole: h.role, ...(offset + h.pageSize < events.length ? { nextPageToken: String(offset + h.pageSize) } : {}) };
       },
-      get(id, eid) { const e = db[id].find(e => e.id === eid); return clone(h.tamper ? { ...e, extendedProperties: {} } : e); },
+      get(id, eid) { h.elapsedMs += h.getElapsedMs || 0; const e = db[id].find(e => e.id === eid); return clone(h.tamper ? { ...e, extendedProperties: {} } : e); },
       insert(body, id, opts) {
         calls.push(['insert', id, clone(body), opts]);
+        h.elapsedMs += h.writeElapsedMs;
         if (h.failWrite) throw new Error('SECRET');
         db[id].push({ ...clone(body), id: body.id || 'generated' + sequence++, organizer: { self: true } });
         if (h.ambiguousInsert) { h.ambiguousInsert = false; throw new Error('Request timed out after commit'); }
       },
       update(body, id, eid, opts) { calls.push(['update', id, eid, opts]); if (h.failWrite) throw new Error('SECRET'); db[id][db[id].findIndex(e => e.id === eid)] = { ...clone(body), id: eid, organizer: { self: true } }; },
-      remove(id, eid, opts) { calls.push(['delete', id, eid, opts]); if (h.failWrite) throw new Error('SECRET'); db[id] = db[id].filter(e => e.id !== eid); }
+      remove(id, eid, opts) { calls.push(['delete', id, eid, opts]); h.elapsedMs += h.writeElapsedMs; if (h.failWrite) throw new Error('SECRET'); db[id] = db[id].filter(e => e.id !== eid); }
     } }
   };
   vm.createContext(context);
@@ -383,4 +385,76 @@ test('hub source labels are escaped, refreshed in place, and never leak into Bus
   assert.equal(h.run().applied, 0);
   assert.equal(h.blocks('c')[0].description, undefined);
   assert.equal(h.db.b[0].description, '<p>Agenda</p>');
+});
+
+
+test('initial sync pauses at its write budget and resumes from fresh events without duplicates', () => {
+  const h = harness();
+  h.db.a.push(event('first'), event('second'));
+  h.writeElapsedMs = 110000;
+  const partial = h.run();
+  assert.equal(partial.ok, true);
+  assert.equal(partial.complete, false);
+  assert.equal(partial.stage, 'partial');
+  assert.equal(partial.applied, 2);
+  assert.equal(partial.remaining, 2);
+  assert.equal(partial.lastSuccessfulSyncAt, null);
+  assert.deepEqual(JSON.parse(h.props.busySyncCalendars), ['a', 'b', 'c']);
+  // Source changes between runs must supersede the abandoned plan.
+  h.db.a[0].start.dateTime = '2026-10-10T12:00:00Z';
+  h.db.a[0].end.dateTime = '2026-10-10T13:00:00Z';
+  h.writeElapsedMs = 0;
+  const complete = h.run();
+  assert.equal(complete.complete, true);
+  assert.ok(complete.lastSuccessfulSyncAt);
+  for (const id of ['b', 'c']) {
+    assert.equal(h.blocks(id).length, 2);
+    assert.ok(h.blocks(id).some(e => e.start.dateTime === '2026-10-10T12:00:00.000Z'));
+  }
+  assert.equal(h.run().applied, 0);
+});
+
+test('partial cleanup retains destinations and last successful sync until cleanup finishes', () => {
+  const h = harness();
+  h.db.a.push(event('first'), event('second'));
+  const prior = h.run().lastSuccessfulSyncAt;
+  h.context.SYNC_CONFIG.calendars.pop();
+  h.writeElapsedMs = 110000;
+  const partial = h.context.cleanupAllBlocks();
+  assert.equal(partial.complete, false);
+  assert.equal(partial.remaining, 2);
+  assert.equal(partial.lastSuccessfulSyncAt, prior);
+  assert.ok(JSON.parse(h.props.busySyncCalendars).includes('c'));
+  h.writeElapsedMs = 0;
+  assert.equal(h.context.cleanupAllBlocks().complete, true);
+  assert.deepEqual(JSON.parse(h.props.busySyncCalendars), []);
+  assert.equal(h.blocks('b').length + h.blocks('c').length, 0);
+  assert.equal(h.db.a.length, 2);
+});
+
+test('time budget exhaustion during reads still fails closed without calendar writes', () => {
+  const h = harness();
+  h.db.a.push(event('first'));
+  h.readElapsedMs = 130000;
+  assert.throws(h.run, /time budget/);
+  assert.equal(h.calls.filter(call => call[0] !== 'list').length, 0);
+  assert.equal(JSON.parse(h.props.busySyncStatus).ok, false);
+});
+
+
+test('a slow ownership recheck pauses before mutation and preserves the prior success time', () => {
+  const h = harness();
+  h.db.a.push(event('first'));
+  const prior = h.run().lastSuccessfulSyncAt;
+  h.db.a[0].start.dateTime = '2026-10-10T12:00:00Z';
+  h.db.a[0].end.dateTime = '2026-10-10T13:00:00Z';
+  h.getElapsedMs = 211000;
+  const partial = h.run();
+  assert.equal(partial.complete, false);
+  assert.equal(partial.applied, 0);
+  assert.equal(partial.remaining, 2);
+  assert.equal(partial.lastSuccessfulSyncAt, prior);
+  h.getElapsedMs = 0;
+  assert.equal(h.run().applied, 2);
+  assert.equal(h.run().applied, 0);
 });

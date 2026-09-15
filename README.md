@@ -171,7 +171,7 @@ Disconnect deletes the locally stored grant; it does not call Google's app-wide 
 - A script lock serializes sync, callbacks, and account operations. The OAuth library uses that same lock for refresh without releasing an already-held lock.
 - Cleanup acquires the lock and validates its plan before stopping triggers. If writes later fail, rerun cleanup manually.
 - More than `maxChangesPerRun` (default 500) changes rejects the whole plan before writes. Review counts and deliberately increase the cap if initial population needs it. It is not batching.
-- Queries above 20,000 returned events stop. Execution avoids starting another API operation after four minutes. Google quotas still apply, including total daily trigger runtime.
+- Queries above 20,000 returned events stop. Reads have a four-minute budget and must all succeed before calendar writes. Writes pause after about 3.5 minutes with `ok: true`, `complete: false`, `stage: "partial"`, and a `remaining` count. Run `syncCalendars` again (or let the existing five-minute trigger run) until `complete: true`. Each run re-reads calendars and replans; committed copies are not recreated. The last successful sync timestamp advances only after a complete non-preview sync. Partial cleanup retains retirement metadata and must be continued by running `cleanupAllBlocks` again, since cleanup stops scheduling. The configured change limit still applies to the entire remaining plan. Google quotas still apply, including total daily trigger runtime.
 - Expired historical generated blocks are removed. Original historical events are never removed.
 - A five-minute schedule is approximate and cannot prevent every double booking between runs.
 

@@ -32,7 +32,7 @@ function safeSyncError_(error) {
   if (/forbidden|permission|access denied|insufficient|403/i.test(message)) return 'Google denied access. Check calendar sharing, organization restrictions, and script authorization.';
   if (/unauthorized|invalid credentials|login required|401/i.test(message)) return 'Google authorization is missing or expired. Run the script manually and authorize it again.';
   if (/timeout|timed out|backend error|internal error|service unavailable/i.test(message)) return 'Google service request failed temporarily. Retry the run.';
-  if (message === 'Time budget exceeded.') return 'Run exceeded its time budget. Reduce daysAhead or the number of calendars.';
+  if (message === 'Time budget exceeded.') return 'Calendar reads or planning exceeded the time budget before writes could finish. Retry; if this repeats during reads, reduce daysAhead or the number of calendars.';
   if (message === 'Calendar exceeds safety size limit.') return 'Calendar query exceeded the 20,000-event safety limit.';
   if (message.indexOf('Change limit exceeded.') === 0) return 'Change limit exceeded. Inspect planned counts and adjust maxChangesPerRun deliberately.';
   return 'Run stopped. Check configuration and Google service availability. Existing successful writes will reconcile on the next run.';
@@ -108,9 +108,19 @@ function runBusySync_(dryRun, cleanup) {
       // Keep all destinations recoverable even if writes partially fail.
       props.setProperty('busySyncCalendars', JSON.stringify(targets));
       if (access.routes) props.setProperty('busySyncCalendarRoutes', JSON.stringify(access.routes));
-      actions.forEach(function (a) {
+      function pauseForNextRun() {
+        result.stage = 'partial';
+        result.ok = true;
+        result.complete = false;
+        result.remaining = actions.length - result.applied;
+        return result;
+      }
+      for (var actionIndex = 0; actionIndex < actions.length; actionIndex++) {
+        // Leave time to finish the current request and persist status. Each
+        // subsequent run reads fresh snapshots, so no stale plan is replayed.
+        if (Date.now() - started >= 210000) return pauseForNextRun();
+        var a = actions[actionIndex];
         result.stage = a.type + ' operation ' + (result.applied + 1) + ' of ' + actions.length;
-        guard();
         if (a.type === 'insert') {
           // Each attempted insert has its own ID. Do not retry ambiguous errors;
           // the next complete read finds committed inserts using private metadata.
@@ -119,11 +129,12 @@ function runBusySync_(dryRun, cleanup) {
         } else {
           var current = eventsApi.get(a.calendar, a.id);
           if (!BusySync.managed(current, owner) || (current.attendees || []).length || (current.organizer && !current.organizer.self)) throw new Error('Changed block requires manual inspection.');
+          if (Date.now() - started >= 210000) return pauseForNextRun();
           if (a.type === 'delete') eventsApi.remove(a.calendar, a.id, { sendUpdates: 'none' });
           else eventsApi.update(a.body, a.calendar, a.id, { sendUpdates: 'none' });
         }
         result.applied++;
-      });
+      }
       props.setProperty('busySyncCalendars', JSON.stringify(active));
       if (access.routes) {
         var remainingRoutes = {};
@@ -134,6 +145,7 @@ function runBusySync_(dryRun, cleanup) {
     }
     result.stage = 'complete';
     result.ok = true;
+    result.complete = true;
     return result;
   } catch (error) {
     result.ok = false;
