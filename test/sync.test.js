@@ -49,7 +49,7 @@ function harness(ids = ['a', 'b', 'c']) {
     } }
   };
   vm.createContext(context);
-  for (const file of ['Core', 'Config', 'CalendarAccess', 'Code']) vm.runInContext(fs.readFileSync(`src/${file}.js`, 'utf8'), context);
+  for (const file of ['Core', 'CalendarAccess', 'Code']) vm.runInContext(fs.readFileSync(`src/${file}.js`, 'utf8'), context);
   context.SYNC_CONFIG = config(ids);
   h.context = context;
   h.run = () => context.syncCalendars();
@@ -317,4 +317,44 @@ test('provider diagnostics classify errors without exposing raw messages', () =>
     const safe = h.context.safeSyncError_(new Error(message));
     assert.match(safe, expected); assert.ok(!safe.includes('SECRET'));
   }
+});
+
+
+test('loop prevention holds for two through eight calendars and every hub destination', () => {
+  for (let size = 2; size <= 8; size++) {
+    const ids = Array.from({ length: size }, (_, i) => 'calendar-' + i);
+    const h = harness(ids);
+    for (const id of ids) h.db[id].push(event('original-' + id));
+    assert.equal(h.run().planned.insert, size * (size - 1));
+    for (const hub of [...ids, null]) {
+      h.context.SYNC_CONFIG.hubCalendarId = hub;
+      h.run();
+      for (let repeat = 0; repeat < 3; repeat++) assert.equal(h.run().applied, 0);
+      for (const id of ids) {
+        assert.equal(h.db[id].length, size);
+        assert.equal(h.blocks(id).length, size - 1);
+        assert.deepEqual(h.db[id].find(e => e.id === 'original-' + id), event('original-' + id));
+        for (const copy of h.blocks(id)) {
+          assert.equal(copy.summary, id === hub ? 'SECRET' : 'Busy');
+          assert.equal(copy.description, id === hub ? 'SECRET' : undefined);
+        }
+      }
+    }
+  }
+});
+
+test('copies from another installation of this script never become sources', () => {
+  const h = harness();
+  h.db.a.push(event('original'));
+  h.run();
+  const foreign = clone(h.blocks('b')[0]);
+  foreign.id = 'other-installation';
+  foreign.extendedProperties.private.busySyncOwner = 'other-owner';
+  h.db.c.push(foreign);
+  h.db.a = [];
+  h.run();
+  assert.equal(h.db.a.length, 0);
+  assert.equal(h.db.b.length, 0);
+  assert.deepEqual(h.db.c, [foreign]);
+  assert.equal(h.run().applied, 0);
 });

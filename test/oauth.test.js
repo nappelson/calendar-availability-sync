@@ -206,3 +206,52 @@ test('failed last-calendar read preserves every existing copy', () => {
   assert.throws(() => h.context.syncCalendars(), /HTTP 503/);
   assert.deepEqual(h.db['personal@example.com'], before);
 });
+
+
+test('adding OAuth accounts, changing hub, retirement and wider grants cannot propagate copies', () => {
+  const h = oauthHarness(), c = h.context.SYNC_CONFIG;
+  h.connectAll();
+  for (const calendar of c.calendars) h.db[calendar.id].push(h.event('original-' + calendar.account));
+  h.context.syncCalendars();
+  // Add accounts after copies already exist, including an account with a wider grant.
+  h.tokenScope += ' https://www.googleapis.com/auth/calendar.readonly';
+  for (const key of ['clientone', 'clienttwo']) {
+    const email = key + '@example.com';
+    c.accounts.push({ key, email });
+    c.calendars.push({ id: email, account: key });
+    h.db[email] = [h.event('original-' + key)];
+    assert.match(h.connect(key), /Account connected/);
+  }
+  const originals = Object.fromEntries(c.calendars.map(cal => [cal.id, clone(h.db[cal.id].find(e => e.id.startsWith('original-')))]));
+  function checkStable() {
+    for (let i = 0; i < 3; i++) assert.equal(h.context.syncCalendars().applied, 0);
+    const sources = c.calendars.filter(cal => h.db[cal.id].some(e => e.id.startsWith('original-')));
+    for (const cal of c.calendars) {
+      const copies = h.db[cal.id].filter(e => e.extendedProperties);
+      assert.equal(copies.length, sources.filter(source => source.id !== cal.id).length);
+      for (const copy of copies) {
+        assert.equal(copy.summary, cal.id === c.hubCalendarId ? 'EVENT_SECRET' : 'Busy');
+        if (cal.id !== c.hubCalendarId) assert.equal(copy.description, undefined);
+      }
+      const original = h.db[cal.id].find(e => e.id.startsWith('original-'));
+      if (original) assert.deepEqual(original, originals[cal.id]);
+    }
+  }
+  h.context.syncCalendars();
+  checkStable();
+  for (const hub of ['clientone@example.com', null, 'personal@example.com']) {
+    c.hubCalendarId = hub;
+    h.context.syncCalendars();
+    checkStable();
+  }
+  const retired = c.calendars.pop();
+  h.context.syncCalendars();
+  assert.deepEqual(h.db[retired.id], [originals[retired.id]]);
+  checkStable();
+  c.calendars.push(retired);
+  h.context.syncCalendars();
+  checkStable();
+  h.db['work@example.com'] = h.db['work@example.com'].filter(e => !e.id.startsWith('original-'));
+  h.context.syncCalendars();
+  checkStable();
+});
